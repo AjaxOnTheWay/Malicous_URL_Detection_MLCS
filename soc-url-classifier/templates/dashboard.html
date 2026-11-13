@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URL Threat Detection | SOC Dashboard</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --inset: #162033;
+    --line: #334155;
+    --line-soft: #2b3a51;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --faint: #64748b;
+    --crit: #ef4444;
+    --high: #f59e0b;
+    --ok: #22c55e;
+    --accent: #38bdf8;
+    --mono: "JetBrains Mono", "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: Inter, "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { margin: 0; font: 14px/1.5 var(--sans); color: var(--text); background: var(--bg); }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- top bar ---------- */
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 12px 24px; background: #0b1222; border-top: 3px solid var(--accent); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 4px;
+    background: var(--panel); border: 1px solid var(--line); font: 700 13px var(--mono); color: var(--accent); }
+  .brand h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
+  .brand p { margin: 0; font-size: 12px; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .dot.ready { background: var(--ok); }
+  .dot.error { background: var(--crit); }
+
+  /* ---------- layout ---------- */
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 24px 40px; display: grid; gap: 16px;
+    grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .span-5 { grid-column: span 5; } .span-7 { grid-column: span 7; } .span-12 { grid-column: span 12; }
+  @media (max-width: 980px) { main { padding: 16px; } .span-5, .span-7 { grid-column: span 12; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+  .panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .panel h2 { margin: 0; font-size: 13px; font-weight: 650; }
+  .panel .body { padding: 16px; }
+  .tag { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 7px; }
+
+  /* ---------- scanner ---------- */
+  label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+  .field { margin-bottom: 14px; }
+  input[type=text], select { width: 100%; padding: 9px 11px; background: var(--inset); border: 1px solid var(--line);
+    border-radius: 4px; }
+  input[type=text] { font-family: var(--mono); font-size: 13px; }
+  input::placeholder { color: var(--faint); }
+  .btn { padding: 8px 14px; border-radius: 4px; border: 1px solid var(--line); background: var(--inset);
+    cursor: pointer; font-weight: 550; }
+  .btn:hover { border-color: var(--faint); }
+  .btn:disabled { opacity: .55; cursor: progress; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #06202d; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger:hover { border-color: var(--crit); color: #fecaca; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .divider { height: 1px; background: var(--line-soft); margin: 16px 0 14px; }
+  .hint { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+  .error { margin-top: 12px; padding: 9px 12px; border: 1px solid #7f1d1d; background: #2a1618; color: #fecaca;
+    border-radius: 4px; font-size: 13px; }
+  .error[hidden] { display: none; }
+
+  /* ---------- empty states ---------- */
+  .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+  .empty strong { display: block; color: var(--text); font-weight: 600; margin-bottom: 2px; }
+
+  /* ---------- verdict ---------- */
+  .verdict-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 3px; font: 700 14px var(--mono); letter-spacing: .6px;
+    border: 1px solid; }
+  .badge.legit { color: #bbf7d0; background: rgba(34, 197, 94, .14); border-color: rgba(34, 197, 94, .55); }
+  .badge.malicious { color: #fecaca; background: rgba(239, 68, 68, .16); border-color: rgba(239, 68, 68, .6); }
+  .badge.sm { padding: 1px 7px; font-size: 11px; letter-spacing: .3px; }
+  .score { display: flex; align-items: baseline; gap: 8px; }
+  .score b { font: 700 44px/1 var(--mono); }
+  .score span { color: var(--muted); font-size: 13px; }
+  .lvl-critical { color: var(--crit); } .lvl-high { color: var(--high); } .lvl-info { color: var(--ok); }
+
+  .meter-wrap { margin: 18px 0 4px; }
+  .meter { position: relative; height: 14px; border-radius: 2px; overflow: hidden; display: flex; background: var(--inset); }
+  .meter .band { height: 100%; opacity: .28; }
+  .band.safe { width: 50%; background: var(--ok); }
+  .band.warn { width: 30%; background: var(--high); }
+  .band.crit { width: 20%; background: var(--crit); }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width .7s cubic-bezier(.2, .8, .2, 1); }
+  .fill.critical { background: var(--crit); } .fill.high { background: var(--high); } .fill.info { background: var(--ok); }
+  .meter .tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--panel); }
+  .scale { position: relative; height: 18px; margin-top: 4px; font: 11px var(--mono); color: var(--muted); }
+  .scale span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+  .scale .s0 { left: 0; transform: none; } .scale .s100 { right: 0; left: auto; transform: none; }
+
+  .banner { margin-top: 14px; padding: 10px 14px; border-radius: 4px; border: 1px solid; border-left-width: 4px; }
+  .banner b { display: block; font: 700 13px var(--mono); letter-spacing: .4px; }
+  .banner span { font-size: 13px; color: var(--text); }
+  .banner.critical { border-color: var(--crit); background: rgba(239, 68, 68, .1); } .banner.critical b { color: #fca5a5; }
+  .banner.high { border-color: var(--high); background: rgba(245, 158, 11, .1); } .banner.high b { color: #fcd34d; }
+  .banner.info { border-color: var(--ok); background: rgba(34, 197, 94, .09); } .banner.info b { color: #86efac; }
+
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 14px 0 0; font-size: 13px; }
+  dl.meta dt { color: var(--muted); } dl.meta dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--inset); position: sticky; top: 0; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .desc { color: var(--muted); font-size: 12.5px; }
+  .log-wrap { max-height: 380px; }
+  .url-cell { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  .act { min-width: 240px; }
+
+  /* ---------- response actions ---------- */
+  ul.actions { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+  ul.actions li { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 10px 12px; background: var(--inset);
+    border: 1px solid var(--line-soft); border-radius: 4px; }
+  ul.actions .chk { width: 18px; height: 18px; margin-top: 2px; border-radius: 50%; display: grid; place-items: center;
+    font: 700 11px var(--mono); color: #06202d; }
+  ul.actions li.critical .chk { background: var(--crit); } ul.actions li.high .chk { background: var(--high); }
+  ul.actions li.info .chk { background: var(--ok); }
+  ul.actions b { display: block; font-size: 13px; }
+  ul.actions span { display: block; font-size: 12.5px; color: var(--muted); }
+
+  /* ---------- metrics ---------- */
+  td.best { color: var(--accent); font-weight: 700; }
+  .cms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 18px; }
+  .cm h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .cm table { border: 1px solid var(--line-soft); }
+  .cm th, .cm td { text-align: center; }
+  .cm th:first-child, .cm td:first-child { text-align: left; }
+  .cm td.good { background: rgba(34, 197, 94, .1); } .cm td.bad { background: rgba(239, 68, 68, .1); }
+  .foot { margin: 14px 0 0; font-size: 12px; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) { .meter .fill { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">&gt;_</div>
+    <div>
+      <h1>URL Threat Detection</h1>
+      <p>Activity 2: Legitimate vs. malicious URL classification</p>
+    </div>
+  </div>
+  <div class="status" id="health" role="status"><span class="dot"></span><span>Checking models</span></div>
+</div>
+
+<main>
+  <!-- Scanner -->
+  <section class="panel span-5" aria-labelledby="h-scan">
+    <header><h2 id="h-scan">URL scanner</h2><span class="tag">POST /api/scan</span></header>
+    <div class="body">
+      <form id="scan-form" autocomplete="off" novalidate>
+        <div class="field">
+          <label for="url">URL to scan</label>
+          <input type="text" id="url" name="url" placeholder="https://example.com/path" spellcheck="false" maxlength="2048">
+        </div>
+        <div class="field">
+          <label for="model">Classifier</label>
+          <select id="model" name="model">
+            <option value="svm">SVM (RBF kernel)</option>
+            <option value="lr">Logistic Regression</option>
+          </select>
+        </div>
+        <button type="submit" class="btn primary" id="scan-btn">Scan URL</button>
+      </form>
+      <div class="error" id="scan-error" role="alert" hidden></div>
+      <div class="divider"></div>
+      <p class="hint">Quick demo URLs. Each button fills the field and runs a scan.</p>
+      <div class="row">
+        <button type="button" class="btn" id="test-legit">Test Legitimate URL</button>
+        <button type="button" class="btn" id="test-mal">Test Malicious URL</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Verdict -->
+  <section class="panel span-7" aria-labelledby="h-verdict">
+    <header><h2 id="h-verdict">Classification and risk score</h2><span class="tag" id="verdict-tag">awaiting scan</span></header>
+    <div class="body" id="verdict">
+      <div class="empty"><strong>No URL scanned yet</strong>Scan a URL to see its verdict, risk score and automated response.</div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="panel span-5" aria-labelledby="h-feat">
+    <header><h2 id="h-feat">Extracted URL features</h2><span class="tag">6 features</span></header>
+    <div class="table-wrap" id="features">
+      <div class="empty"><strong>No features yet</strong>Feature values appear after a scan.</div>
+    </div>
+  </section>
+
+  <!-- SOC response -->
+  <section class="panel span-7" aria-labelledby="h-resp">
+    <header><h2 id="h-resp">Automated SOC response</h2><span class="tag">simulated</span></header>
+    <div class="body" id="response">
+      <div class="empty"><strong>No response triggered</strong>Actions are chosen from the risk score: 80 and above, 50 to 79, below 50.</div>
+    </div>
+  </section>
+
+  <!-- Metrics -->
+  <section class="panel span-12" aria-labelledby="h-metrics">
+    <header><h2 id="h-metrics">Model performance comparison</h2><span class="tag" id="metrics-tag">hold-out test set</span></header>
+    <div class="body" id="metrics">
+      <div class="empty"><strong>Loading metrics</strong></div>
+    </div>
+  </section>
+
+  <!-- SIEM log -->
+  <section class="panel span-12" aria-labelledby="h-log">
+    <header>
+      <h2 id="h-log">Live SIEM incident log</h2>
+      <div class="row" style="align-items:center">
+        <span class="tag" id="log-count">0 events</span>
+        <button type="button" class="btn danger" id="clear-btn">Clear Logs</button>
+      </div>
+    </header>
+    <div class="table-wrap log-wrap" id="log">
+      <div class="empty"><strong>No incidents logged this session</strong>Scan a URL to create the first entry.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var SAMPLES = {
+    legit: 'https://www.github.com',
+    malicious: 'http://192.168.1.45/secure-login-verify-account?id=99'
+  };
+  var FEATURE_INFO = {
+    url_length: 'Total characters in the URL',
+    has_https: '1 when the scheme is https',
+    dot_count: 'Number of "." characters',
+    special_char_count: 'Count of @ - _ ? = % &',
+    suspicious_word_count: 'Phishing keywords found (login, verify, secure, ...)',
+    has_ip_address: '1 when the hostname is an IPv4 address'
+  };
+  var METRIC_ROWS = [['accuracy', 'Accuracy'], ['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1-Score']];
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* Safe DOM builder: all dynamic text goes through textContent, never innerHTML. */
+  function h(tag, attrs) {
+    var node = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === 'class') node.className = v;
+      else if (k === 'text') node.textContent = v;
+      else node.setAttribute(k, v === true ? '' : v);
+    });
+    for (var i = 2; i < arguments.length; i++) append(node, arguments[i]);
+    return node;
+  }
+  function append(node, kid) {
+    if (kid === null || kid === undefined || kid === false) return;
+    if (Array.isArray(kid)) { kid.forEach(function (k) { append(node, k); }); return; }
+    node.appendChild(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  function replace(container, node) { container.textContent = ''; container.appendChild(node); }
+  function empty(title, text) {
+    return h('div', { 'class': 'empty' }, h('strong', { text: title }), text || null);
+  }
+
+  function api(path, options) {
+    options = options || {};
+    var opts = { method: options.method || 'GET', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } };
+    if (options.body) opts.body = JSON.stringify(options.body);
+    return fetch(path, opts).then(function (res) {
+      return res.json().catch(function () { return null; }).then(function (data) {
+        if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+        return data;
+      });
+    });
+  }
+
+  /* ---------- health ---------- */
+  function loadHealth() {
+    api('/api/health').then(function (d) {
+      var box = $('health'); box.textContent = '';
+      box.appendChild(h('span', { 'class': 'dot ' + (d.ready ? 'ready' : 'error') }));
+      box.appendChild(h('span', { text: d.ready ? 'Models ready: ' + d.models_loaded.join(', ')
+                                               : 'Models missing. Run train_models.py' }));
+    }).catch(function () {
+      var box = $('health'); box.textContent = '';
+      box.appendChild(h('span', { 'class': 'dot error' }));
+      box.appendChild(h('span', { text: 'Backend unreachable' }));
+    });
+  }
+
+  /* ---------- scan ---------- */
+  function showError(msg) {
+    var box = $('scan-error');
+    box.textContent = msg || '';
+    box.hidden = !msg;
+  }
+
+  function scan(url) {
+    url = (url || '').trim();
+    if (!url) { showError('Enter a URL to scan.'); $('url').focus(); return Promise.resolve(); }
+    showError('');
+    var btn = $('scan-btn'); btn.disabled = true; btn.textContent = 'Scanning...';
+    return api('/api/scan', { method: 'POST', body: { url: url, model: $('model').value } })
+      .then(function (result) { renderResult(result); return loadLogs(); })
+      .catch(function (err) { showError(err.message); })
+      .then(function () { btn.disabled = false; btn.textContent = 'Scan URL'; });
+  }
+
+  function renderResult(r) {
+    var sev = r.alert.severity;
+    var malicious = r.classification === 'MALICIOUS';
+    $('verdict-tag').textContent = r.model;
+
+    var fill = h('div', { 'class': 'fill ' + sev });
+    var meter = h('div', { 'class': 'meter', role: 'img', 'aria-label': 'Risk score ' + r.risk_score + ' out of 100' },
+      h('div', { 'class': 'band safe' }), h('div', { 'class': 'band warn' }), h('div', { 'class': 'band crit' }), fill,
+      h('div', { 'class': 'tick', style: 'left:calc(50% - 1px)' }), h('div', { 'class': 'tick', style: 'left:calc(80% - 1px)' }));
+    var scale = h('div', { 'class': 'scale', 'aria-hidden': 'true' },
+      h('span', { 'class': 's0', text: '0' }),
+      h('span', { style: 'left:25%', text: 'info' }),
+      h('span', { style: 'left:50%', text: '50' }),
+      h('span', { style: 'left:65%', text: 'high' }),
+      h('span', { style: 'left:80%', text: '80' }),
+      h('span', { style: 'left:90%', text: 'critical' }),
+      h('span', { 'class': 's100', text: '100' }));
+
+    replace($('verdict'), h('div', null,
+      h('div', { 'class': 'verdict-top' },
+        h('span', { 'class': 'badge ' + (malicious ? 'malicious' : 'legit'), text: r.classification }),
+        h('div', { 'class': 'score' },
+          h('b', { 'class': 'lvl-' + sev, text: r.risk_score.toFixed(1) }),
+          h('span', { text: '/ 100 risk score' }))),
+      h('div', { 'class': 'meter-wrap' }, meter, scale),
+      h('div', { 'class': 'banner ' + sev }, h('b', { text: r.alert.label }), h('span', { text: r.alert.summary })),
+      h('dl', { 'class': 'meta' },
+        h('dt', { text: 'Scanned URL' }), h('dd', { text: r.scanned_url }),
+        h('dt', { text: 'Host' }), h('dd', { text: r.host || 'n/a' }),
+        h('dt', { text: 'Classifier' }), h('dd', { text: r.model }),
+        h('dt', { text: 'P(malicious)' }), h('dd', { text: r.probability_malicious.toFixed(4) }),
+        h('dt', { text: 'Scanned at' }), h('dd', { text: r.timestamp + ' UTC' }))));
+    requestAnimationFrame(function () { requestAnimationFrame(function () { fill.style.width = r.risk_score + '%'; }); });
+
+    // feature breakdown
+    var rows = Object.keys(r.features).map(function (k) {
+      return h('tr', null,
+        h('td', { 'class': 'mono', text: k }),
+        h('td', { 'class': 'num', text: r.features[k] }),
+        h('td', { 'class': 'desc', text: FEATURE_INFO[k] || '' }));
+    });
+    replace($('features'), h('table', null,
+      h('thead', null, h('tr', null, h('th', { text: 'Feature' }), h('th', { 'class': 'num', text: 'Value' }), h('th', { text: 'What it measures' }))),
+      h('tbody', null, rows)));
+
+    // SOC response
+    var items = r.alert.actions.map(function (a) {
+      return h('li', { 'class': sev },
+        h('div', { 'class': 'chk', 'aria-hidden': 'true', text: '\u2713' }),
+        h('div', null, h('b', { text: a.title }), h('span', { text: a.detail })));
+    });
+    replace($('response'), h('div', null,
+      h('div', { 'class': 'banner ' + sev, style: 'margin-top:0' },
+        h('b', { text: r.alert.label }),
+        h('span', { text: r.alert.incident_id ? ('Reference ' + r.alert.incident_id + '. Simulated actions, no real network changes.')
+                                              : 'Simulated actions, no real network changes.' })),
+      h('ul', { 'class': 'actions' }, items)));
+  }
+
+  /* ---------- metrics ---------- */
+  function pct(v) { return (v * 100).toFixed(2) + '%'; }
+
+  function loadMetrics() {
+    api('/api/metrics').then(function (d) {
+      var names = Object.keys(d.models);
+      var head = h('tr', null, h('th', { text: 'Metric' }), names.map(function (n) { return h('th', { 'class': 'num', text: n }); }));
+      var body = METRIC_ROWS.map(function (row) {
+        var best = Math.max.apply(null, names.map(function (n) { return d.models[n][row[0]]; }));
+        return h('tr', null,
+          h('td', { text: row[1] }),
+          names.map(function (n) {
+            var v = d.models[n][row[0]];
+            return h('td', { 'class': 'num' + (v === best ? ' best' : ''), text: pct(v) });
+          }));
+      });
+
+      var cms = names.map(function (n) {
+        var m = d.models[n].confusion_matrix;
+        return h('div', { 'class': 'cm' },
+          h('h3', { text: 'Confusion matrix: ' + n }),
+          h('table', null,
+            h('thead', null, h('tr', null, h('th', { text: 'Actual \\ Predicted' }), h('th', { text: 'Legitimate' }), h('th', { text: 'Malicious' }))),
+            h('tbody', null,
+              h('tr', null, h('td', { text: 'Legitimate' }), h('td', { 'class': 'mono good', text: m[0][0] + ' (TN)' }), h('td', { 'class': 'mono bad', text: m[0][1] + ' (FP)' })),
+              h('tr', null, h('td', { text: 'Malicious' }), h('td', { 'class': 'mono bad', text: m[1][0] + ' (FN)' }), h('td', { 'class': 'mono good', text: m[1][1] + ' (TP)' })))));
+      });
+
+      var meta = d.meta || {};
+      $('metrics-tag').textContent = (meta.test_samples || '?') + ' test URLs';
+      replace($('metrics'), h('div', null,
+        h('div', { 'class': 'table-wrap' }, h('table', null, h('thead', null, head), h('tbody', null, body))),
+        h('div', { 'class': 'cms' }, cms),
+        h('p', { 'class': 'foot', text: 'Trained on ' + meta.train_samples + ' URLs, evaluated on ' + meta.test_samples +
+          ' held-out URLs (' + Math.round((meta.test_size || 0.2) * 100) + '% split) from ' + meta.dataset +
+          '. Best value per metric is highlighted. Trained ' + meta.trained_at + '.' })));
+    }).catch(function (err) {
+      replace($('metrics'), empty('Metrics unavailable', err.message));
+    });
+  }
+
+  /* ---------- SIEM log ---------- */
+  function loadLogs() {
+    return api('/api/logs').then(function (d) { renderLogs(d.logs); }).catch(function () {});
+  }
+
+  function renderLogs(logs) {
+    $('log-count').textContent = logs.length + (logs.length === 1 ? ' event' : ' events');
+    if (!logs.length) {
+      replace($('log'), empty('No incidents logged this session', 'Scan a URL to create the first entry.'));
+      return;
+    }
+    var rows = logs.map(function (e) {
+      return h('tr', null,
+        h('td', { 'class': 'mono', style: 'white-space:nowrap', text: e.timestamp }),
+        h('td', null, h('span', { 'class': 'mono url-cell', title: e.url, text: e.url })),
+        h('td', { text: e.model }),
+        h('td', null, h('span', { 'class': 'badge sm ' + (e.status === 'MALICIOUS' ? 'malicious' : 'legit'), text: e.status })),
+        h('td', { 'class': 'num lvl-' + e.level.toLowerCase(), text: e.risk_score.toFixed(1) }),
+        h('td', { 'class': 'act', text: e.action }));
+    });
+    replace($('log'), h('table', null,
+      h('thead', null, h('tr', null,
+        h('th', { text: 'Time (UTC)' }), h('th', { text: 'Scanned URL' }), h('th', { text: 'Model' }),
+        h('th', { text: 'Status' }), h('th', { 'class': 'num', text: 'Risk' }), h('th', { text: 'Automated SOC action' }))),
+      h('tbody', null, rows)));
+  }
+
+  /* ---------- wiring ---------- */
+  $('scan-form').addEventListener('submit', function (ev) { ev.preventDefault(); scan($('url').value); });
+  $('test-legit').addEventListener('click', function () { $('url').value = SAMPLES.legit; scan(SAMPLES.legit); });
+  $('test-mal').addEventListener('click', function () { $('url').value = SAMPLES.malicious; scan(SAMPLES.malicious); });
+  $('clear-btn').addEventListener('click', function () {
+    api('/api/logs/clear', { method: 'POST', body: {} }).then(function (d) { renderLogs(d.logs); }).catch(function (e) { showError(e.message); });
+  });
+
+  loadHealth();
+  loadMetrics();
+  loadLogs();
+})();
+</script>
+</body>
+</html>
